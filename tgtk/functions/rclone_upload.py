@@ -28,7 +28,7 @@ async def rclone_driver(path,message, user_msg, dl_task):
         rem_base = get_val("RCLONE_BASE_DIR")
         edtime = get_val("EDIT_SLEEP_SECS")
 
-        return await rclone_upload(path,message,user_msg,drive_name,rem_base,edtime,conf_path, ul_task)
+        return await rclone_upload(path,message,user_msg,drive_name,rem_base,edtime,conf_path)
     
 
 # add user prompt here
