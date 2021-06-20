@@ -21,37 +21,32 @@ async def rclone_driver(path,message, user_msg, dl_task):
     # get the default drive
     conf_path = await get_config()
     if conf_path is None:
-        torlog.info("the configuration file was not found.")
+        torlog.info("The confi file not found")
         return None
     else:
         drive_name = get_val("DEF_RCLONE_DRIVE")
         rem_base = get_val("RCLONE_BASE_DIR")
         edtime = get_val("EDIT_SLEEP_SECS")
 
-        
-        ul_task = RCUploadTask(dl_task)
-        try:
-            return await rclone_upload(path,message,user_msg,drive_name,rem_base,edtime,conf_path, ul_task)
-        except:
-            await ul_task.set_inactive()
-            torlog.exception("something went wrong. check logs for more infomation.")
-            return 
+        return await rclone_upload(path,message,user_msg,drive_name,rem_base,edtime,conf_path, ul_task)
+    
 
 # add user prompt here
 async def rclone_upload(path,message,user_msg,dest_drive,dest_base,edit_time,conf_path, task):
     # this function will need a driver for him :o
     if not os.path.exists(path):
         torlog.info(f"returning none cause the path {path} not found.")
-        await task.set_inactive(f"returning none cause the path {path} not found")
+
+
         return None
     omsg = user_msg
-    await task.set_original_message(omsg)
+
     upload_db.register_upload(omsg.chat_id, omsg.id)
     data = "upcancel {} {} {}".format(omsg.chat_id,omsg.id,omsg.sender_id)
-    buts = [KeyboardButtonCallback("cancel upload.",data.encode("UTF-8"))]
+    buts = [KeyboardButtonCallback("Cancel upload.",data.encode("UTF-8"))]
     
-    msg = await message.reply("<b>uploading to configured drive.... will be updated soon.",parse_mode="html", buttons=buts)
-    await task.set_message(msg)
+    msg = await message.reply("<b>Uploading to configured drive.... will be updated soon.",parse_mode="html", buttons=buts)
+
 
     if os.path.isdir(path):
         # handle dirs
@@ -70,15 +65,13 @@ async def rclone_upload(path,message,user_msg,dest_drive,dest_base,edit_time,con
         rcres = await rclone_process_display(rclone_pr,edit_time,msg, message, omsg, task)
         
         if rcres is False:
-            await message.edit(message.text + "\ncanceled rclone upload.")
+            await message.edit(message.text + "\nCanceled Rclone Upload")
             await msg.delete()
             rclone_pr.kill()
-            task.cancel = True
-            await task.set_inactive("canceled rclone upload.")
-            return task
+            return True
             
 
-        torlog.info("upload complete")
+        torlog.info("Upload complete")
         gid = await get_glink(dest_drive,dest_base,os.path.basename(path),conf_path)
         torlog.info(f"Upload folder id :- {gid}")
         
@@ -86,7 +79,7 @@ async def rclone_upload(path,message,user_msg,dest_drive,dest_base,edit_time,con
 
         buttons = []
         buttons.append(
-            [KeyboardButtonUrl("drive url",folder_link)]
+            [KeyboardButtonUrl("Drive URL",folder_link)]
         )
         gd_index = get_val("GD_INDEX_URL")
         if gd_index:
@@ -94,14 +87,17 @@ async def rclone_upload(path,message,user_msg,dest_drive,dest_base,edit_time,con
             index_link = requote_uri(index_link)
             torlog.info("index link "+str(index_link))
             buttons.append(
-                [KeyboardButtonUrl("index url",index_link)]
+                [KeyboardButtonUrl("Index URL",index_link)]
             )
         
         ul_size = calculate_size(path)
         transfer[0] += ul_size
 
         ul_size = Human_Format.human_readable_bytes(ul_size)
-        txtmsg = "<a href='tg://user?id={}'>finished leech.</a>\nuploaded folder:<code>{}</code>\nto drive.".format(omsg.sender_id,ul_size,os.path.basename(path))
+        txtmsg = "<a href='tg://user?id={}'>Done</a>\n#uploads\nUploaded Size:- {}\nUPLOADED FOLDER :-<code>{}</code>\nTo Drive.".format(omsg.sender_id,ul_size,os.path.basename(path))
+        
+        await omsg.reply(txtmsg,buttons=buttons,parse_mode="html")
+        await msg.delete()
 
 
     else:
@@ -120,14 +116,12 @@ async def rclone_upload(path,message,user_msg,dest_drive,dest_base,edit_time,con
         rcres = await rclone_process_display(rclone_pr,edit_time,msg, message, omsg, task)
         
         if rcres is False:
-            await message.edit(message.text + "\ncanceled rclone upload")
+            await message.edit(message.text + "\nCanceled Rclone Upload")
             await msg.delete()
             rclone_pr.kill()
-            task.cancel = True
-            await task.set_inactive("canceled rclone upload")
-            return task
+            return True
 
-        torlog.info("upload complete")
+        torlog.info("Upload complete")
         gid = await get_glink(dest_drive,dest_base,os.path.basename(path),conf_path,False)
         torlog.info(f"Upload folder id :- {gid}")
 
@@ -135,7 +129,7 @@ async def rclone_upload(path,message,user_msg,dest_drive,dest_base,edit_time,con
 
         file_link = f"https://drive.google.com/file/d/{gid[0]}/view"
         buttons.append(
-            [KeyboardButtonUrl("drive url",file_link)]
+            [KeyboardButtonUrl("Drive URL",file_link)]
         )
         gd_index = get_val("GD_INDEX_URL")
         if gd_index:
@@ -143,20 +137,20 @@ async def rclone_upload(path,message,user_msg,dest_drive,dest_base,edit_time,con
             index_link = requote_uri(index_link)
             torlog.info("index link "+str(index_link))
             buttons.append(
-                [KeyboardButtonUrl("index url",index_link)]
+                [KeyboardButtonUrl("Index URL",index_link)]
             )
 
         ul_size = calculate_size(path)
         transfer[0] += ul_size
         ul_size = Human_Format.human_readable_bytes(ul_size)
-        txtmsg = "<a href='tg://user?id={}'>finished leech.</a>\nuploaded file:<code>{}</code>\nto drive.".format(omsg.sender_id,ul_size,os.path.basename(path))
+        txtmsg = "<a href='tg://user?id={}'>Done</a>\n#uploads\nUploaded Size:- {}\nUPLOADED FILE :-<code>{}</code>\nTo Drive.".format(omsg.sender_id,ul_size,os.path.basename(path))
+
         
         await omsg.reply(txtmsg,buttons=buttons,parse_mode="html")
         await msg.delete()
 
     upload_db.deregister_upload(message.chat_id, message.id)
-    await task.set_inactive()
-    return task
+    return True
 
 async def rclone_process_display(process,edit_time,msg, omessage, cancelmsg, task):
     blank=0
@@ -166,7 +160,7 @@ async def rclone_process_display(process,edit_time,msg, omessage, cancelmsg, tas
         
         data = process.stdout.readline().decode()
         data = data.strip()
-        mat = re.findall("transferred:.*eta.*",data)
+        mat = re.findall("Transferred:.*ETA.*",data)
         
         if mat is not None:
             if len(mat) > 0:
@@ -233,7 +227,7 @@ async def get_glink(drive_name,drive_base,ent_name,conf_path,isdir=True):
         name = data[0]["Name"]
         return (id, name)
     except Exception:
-        torlog.error("error occured while getting id: {} {}".format(traceback.format_exc(), stdout))
+        torlog.error("Error Occured while getting id ::- {} {}".format(traceback.format_exc(), stdout))
 
 async def get_config():
     # this car requires to access the blob
