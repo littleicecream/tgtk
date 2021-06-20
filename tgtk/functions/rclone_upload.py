@@ -290,9 +290,10 @@ def calculate_size(path):
                 return get_size_fl(path)
             else:
                 return os.path.getsize(path)
-
+        except:
+            return 0
     else:
-        return 0   
+        return 0      
 
 
 # probably hotfix for rclone ban
