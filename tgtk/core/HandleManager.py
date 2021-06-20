@@ -11,7 +11,7 @@ from ..core.getVars import get_val
 from ..functions.Leech_Module import check_link,cancel_torrent,pause_all,resume_all,purge_all,get_status,print_files, get_transfer
 from ..functions.tele_upload import upload_a_file,upload_handel
 from ..functions import Human_Format
-from .database_handle import TtkUpload,TtkTorrents, TorToolkitDB
+from .database_handle import  tkupload,tktorrents, tkdb
 from .settings import handle_settings,handle_setting_callback
 from .user_settings import handle_user_settings, handle_user_setting_callback
 from functools import partial
