@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-
+# (c) YashDK [yash-dk@github]
 
 import re,os,shutil,time, aiohttp
 from telethon.tl import types
-import logging, shutil
-import math, json
-import urllib.parse
+import logging, os, shutil
 import asyncio as aio
+import requests
+import urllib.parse
 from bs4 import BeautifulSoup
 from . import QBittorrentWrap
 from . import ariatools
@@ -14,11 +14,6 @@ from .tele_upload import upload_handel
 from .rclone_upload import rclone_driver
 from .zip7_utils import add_to_zip, extract_archive
 from ..core.getVars import get_val
-from ..core.status.status import ARTask, QBTask
-from ..core.status.upload import TGUploadTask
-from ..functions.Human_Format import human_readable_bytes
-from .dl_generator import generate_directs
-from .. import transfer
 
 #logging.basicConfig(level=logging.DEBUG)
 logging.getLogger("telethon").setLevel(logging.WARNING)
@@ -60,15 +55,17 @@ def get_entities(msg):
         return urls[0]
     else:
         return None
-
-async def check_link(msg,rclone=False,is_zip=False, extract=False, prev_msg=None):
-    # here moslty rmess = Reply message which the bot uses to update
-    # omess = original message from the sender user 
+    
+   
+    
+async def check_link(msg,rclone=False,is_zip=False, extract=False):
+    urls = None
+    print("here2")
     omess = msg
     msg = await msg.get_reply_message()
 
     if extract:
-        mess = f"you chose to extract the archive <a href='tg://user?id={omess.sender_id}'>enter password if any.</a>\n use <code>/setpass {omess.id} password-here</code>"
+        mess = f"You chose to extract the archive <a href='tg://user?id={omess.sender_id}'>ENTER PASSWORD IF ANY.</a>\n Use <code>/setpass {omess.id} password-here</code>"
         omess.client.dl_passwords[omess.id] = [str(omess.sender_id), None]
         await omess.reply(mess, parse_mode="html")
 
@@ -80,115 +77,94 @@ async def check_link(msg,rclone=False,is_zip=False, extract=False, prev_msg=None
         for i in msg.document.attributes:
             if isinstance(i,types.DocumentAttributeFilename):
                 name = i.file_name
-
+        
         if name is None:
-            await omess.reply("this isn't a torrent file to leech from. send <code>.torrent</code> file",parse_mode="html")
+            await omess.reply("This is not a torrent file to leech from. Send <code>.torrent</code> file",parse_mode="html")
         elif name.lower().endswith(".torrent"):
-            rmess = await omess.reply("downloading the torrent file.")
+            rmess = await omess.reply("Downloading the torrent file.")
 
             #not worring about the download location now
             # TODO do something to de register the torrents
             path = await msg.download_media()
-            torrent_return =  await QBittorrentWrap.register_torrent(path,rmess,omess,file=True)
-
-            dl_path, dl_task = None, None
-            if not isinstance(torrent_return, bool) and torrent_return is not None:
-                dl_path = torrent_return[0]
-                dl_task = torrent_return[1]
-
+            rval =  await QBittorrentWrap.register_torrent(path,rmess,omess,file=True)
+            
+            if not isinstance(rval,bool) and rval is not None:
                 if extract:
-                    newpath = await handle_ext_zip(dl_path, rmess, omess)
+                    newpath = await handle_ext_zip(rval[0], rmess, omess)
                     if not newpath is False:
-                        dl_path = newpath
+                        rval[0] = newpath
                 else:
-                    newpath = await handle_zips(dl_path, is_zip, rmess, not rclone)
+                    newpath = await handle_zips(rval[0], is_zip, rmess)
                     if newpath is False:
                         pass
                     else:
-                        dl_path = newpath
+                        rval[0] = newpath
 
                 if not rclone:
-                    ul_task = TGUploadTask(dl_task)
-                    await ul_task.dl_files()
-                    try:
-                        rdict = await upload_handel(dl_path,rmess,omess.from_id,dict(),user_msg=omess,task=ul_task)
-                    except:
-                        rdict = dict()
-                        torlog.exception("exception in torrent file")
-
-                    await ul_task.set_inactive()
-                    await print_files(omess,rdict,dl_task.hash, path = dl_path, size=ul_size)
-                    torlog.info("here are the files uploaded {}".format(rdict))
-                    await QBittorrentWrap.delete_this(dl_task.hash)
+                    rdict = await upload_handel(rval[0],rmess,omess.from_id,dict(),user_msg=omess)
+                    await print_files(omess,rdict,rval[1])
+                    torlog.info("Here are the fiels uploaded {}".format(rdict))
+                    await QBittorrentWrap.delete_this(rval[1])
                 else:
-                    res = await rclone_driver(dl_path,rmess,omess, dl_task)
+                    res = await rclone_driver(rval[0],rmess,omess)
                     if res is None:
-                        await msg.reply("<b>upload to drive failed. check logs for more info./b>",parse_mode="html")
-                    await QBittorrentWrap.delete_this(dl_task.hash)
+                        await msg.reply("<b>UPLOAD TO DRIVE FAILED CHECK LOGS</b>",parse_mode="html")
+                    await QBittorrentWrap.delete_this(rval[1])
 
-            else:
-                await errored_message(omess, rmess)
-
-            await clear_stuff(path)
-            await clear_stuff(dl_path)
-            return dl_path
+            try:
+                
+                os.remove(path)
+                if os.path.isdir(rval):
+                    shutil.rmtree(rval)
+                else:
+                    os.remove(rval)
+            except:pass
+            return rval
         else:
-            await omess.reply("this is not a torrent file to leech from. send <code>.torrent</code> file.",parse_mode="html")
+            await omess.reply("This is not a torrent file to leech from. Send <code>.torrent</code> file",parse_mode="html")
 
     elif msg.raw_text is not None:
         if msg.raw_text.lower().startswith("magnet:"):
-            rmess = await omess.reply("scanning....")
-
+            rmess = await omess.reply("Scanning....")
+            
             mgt = get_magnets(msg.raw_text.strip())
-            torrent_return = await QBittorrentWrap.register_torrent(mgt,rmess,omess,True)
-
-            dl_path, dl_task = None, None
-            if not isinstance(torrent_return,bool) and torrent_return is not None:
-                dl_path = torrent_return[0]
-                dl_task = torrent_return[1]
-
+            path = await QBittorrentWrap.register_torrent(mgt,rmess,omess,True)
+            
+            if not isinstance(path,bool) and path is not None:
                 if extract:
-                    newpath = await handle_ext_zip(dl_path, rmess, omess)
+                    newpath = await handle_ext_zip(path[0], rmess, omess)
                     if not newpath is False:
-                        dl_path = newpath
+                        path[0] = newpath
                 else:
-                    newpath = await handle_zips(dl_path, is_zip, rmess, not rclone)
+                    newpath = await handle_zips(path[0], is_zip, rmess)
                     if newpath is False:
                         pass
                     else:
-                        dl_path = newpath
+                        path[0] = newpath
+
 
                 if not rclone:
-                    # TODO add exception update for tg upload everywhere
-                    ul_task = TGUploadTask(dl_task)
-                    await ul_task.dl_files()
-
-                    try:
-                        rdict = await upload_handel(dl_path,rmess,omess.from_id,dict(),user_msg=omess,task=ul_task)
-                    except:
-                        rdict = dict()
-                        torlog.exception("exception in magnet")
-
-                    await ul_task.set_inactive()
-                    await print_files(omess,rdict,dl_task.hash, path = dl_path, size=ul_size)
-
-                    torlog.info("here are the files to be uploaded {}".format(rdict))
-                    await QBittorrentWrap.delete_this(dl_task.hash)
-
+                    rdict = await upload_handel(path[0],rmess,omess.from_id,dict(),user_msg=omess)
+                    await print_files(omess,rdict,path[1])
+                    torlog.info("Here are the files to be uploaded {}".format(rdict))
+                    await QBittorrentWrap.delete_this(path[1])
                 else:
-                    res = await rclone_driver(dl_path,rmess,omess, dl_task)
+                    res = await rclone_driver(path[0],rmess,omess)
                     if res is None:
-                        await msg.reply("<b>upload to drive failed. check logs for more info./b>",parse_mode="html")
-                    await QBittorrentWrap.delete_this(dl_task.hash)
-            else:
-                await errored_message(omess, rmess)
-
-            await clear_stuff(dl_path)
-
+                        await msg.reply("<b>UPLOAD TO DRIVE FAILED CHECK LOGS</b>",parse_mode="html")
+                    await QBittorrentWrap.delete_this(path[1])
+            try:
+                
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+            except:pass
         elif msg.raw_text.lower().endswith(".torrent"):
-            rmess = await omess.reply("downloading the torrent file.")
+            rmess = await omess.reply("Downloading the torrent file.")
 
-            # TODO do something to de register the torrents - done
+            #not worring about the download location now
+            # TODO do something to de register the torrents
             path = ""
             async with aiohttp.ClientSession() as sess:
                 async with sess.get(msg.raw_text) as resp:
@@ -197,137 +173,176 @@ async def check_link(msg,rclone=False,is_zip=False, extract=False, prev_msg=None
                         with open(path, "wb") as fi:
                             fi.write(await resp.read())
                     else:
-                        await rmess.edit("error got http response code:- "+str(resp.status))
+                        await rmess.edit("Error got HTTP response code:- "+str(resp.status))
                         return    
 
-            torrent_return =  await QBittorrentWrap.register_torrent(path,rmess,omess,file=True)
-            dl_path, dl_task = None, None
-            if not isinstance(torrent_return,bool) and torrent_return is not None:
-                dl_path = torrent_return[0]
-                dl_task = torrent_return[1]
-
+            rval =  await QBittorrentWrap.register_torrent(path,rmess,omess,file=True)
+            
+            if not isinstance(rval,bool) and rval is not None:
                 if extract:
-                    newpath = await handle_ext_zip(dl_path, rmess, omess)
+                    newpath = await handle_ext_zip(rval[0], rmess, omess)
                     if not newpath is False:
-                        dl_path = newpath
+                        rval[0] = newpath
                 else:
-                    newpath = await handle_zips(dl_path, is_zip, rmess, not rclone)
+                    newpath = await handle_zips(rval[0], is_zip, rmess)
                     if newpath is False:
                         pass
                     else:
-                        dl_path = newpath
+                        rval[0] = newpath
 
                 if not rclone:
-                    ul_task = TGUploadTask(dl_task)
-                    await ul_task.dl_files()
-
-                    try:
-                        rdict = await upload_handel(dl_path,rmess,omess.from_id,dict(),user_msg=omess,task=ul_task)
-                    except:
-                        rdict = dict()
-                        torlog.exception("exception in torrent link")
-
-                    await ul_task.set_inactive()
-                    await print_files(omess,rdict,dl_task.hash, path = dl_path, size=ul_size)
-
-                    torlog.info("here are the files uploaded {}".format(rdict))
-                    await QBittorrentWrap.delete_this(dl_task.hash)
+                    rdict = await upload_handel(rval[0],rmess,omess.from_id,dict(),user_msg=omess)
+                    await print_files(omess,rdict,rval[1])
+                    torlog.info("Here are the fiels uploaded {}".format(rdict))
+                    await QBittorrentWrap.delete_this(rval[1])
                 else:
-                    res = await rclone_driver(dl_path,rmess,omess, dl_task)
+                    res = await rclone_driver(rval[0],rmess,omess)
                     if res is None:
-                        await msg.reply("<b>upload to drive failed. check logs for more info.</b>",parse_mode="html")
-                    await QBittorrentWrap.delete_this(dl_task.hash)
-            else:
-                await errored_message(omess, rmess)
+                        await msg.reply("<b>UPLOAD TO DRIVE FAILED CHECK LOGS</b>",parse_mode="html")
+                    await QBittorrentWrap.delete_this(rval[1])
 
-            await clear_stuff(path)
-            await clear_stuff(dl_path)
-            return dl_path
-
-        else:
-            urls = msg.raw_text
-            url = msg.raw_text
-            torlog.info("aria2 is downloading:\n{}".format(urls))
-            rmsg = await omess.reply("**processing the link...**")
-            await aio.sleep(1)
-
-            url = await generate_directs(urls)
-            if url is not None:
-                if "**ERROR:" in url:
-                    await rmsg.edit(url)
-                    await aio.sleep(2)
-                    await errored_message(omess, rmsg)
-                    return
-                else:
-                    await rmsg.edit(f"**Found directs:** `{url}`")
-                    await aio.sleep(2)
-
-            re_name = None
             try:
-                if " "  in omess.raw_text:
-                    cmd = omess.raw_text.split(" ", 1)[-1]
-                    if len(cmd) > 0:
-                        re_name = cmd
-                    else:
-                        torlog.info(f"this is not a valid name for renaming: {omess.raw_text}")
-            except:
-                torlog.exception("invaild rename detected.")
+                
+                os.remove(path)
+                if os.path.isdir(rval):
+                    shutil.rmtree(rval)
+                else:
+                    os.remove(rval)
+            except:pass
+            return rval
 
-            # weird stuff had to refect message
-            path = None
-            rmsg = await omess.client.get_messages(ids=rmsg.id, entity=rmsg.chat_id)
-
-            if url is None:
-                stat, dl_task = await ariatools.aria_dl(msg.raw_text,"",rmsg,omess)
+        elif msg.entities is not None:
+            urls = get_entities(msg)
+            # currently discontinuing the depending on the entities as its eratic
+            url = None
+            rmsg = await omess.reply("Scanning....")
+            await aio.sleep(1)
+            if 'zippyshare.com' in urls:
+                await rmsg.edit("Zippyshare Link Found")
+                await aio.sleep(2)
+                try:
+                    link = re.findall(r'\bhttps?://.*zippyshare\.com\S+', urls)[0]
+                except:
+                    await rmsg.edit("No ZippyShare links found")
+                session = requests.Session()
+                base_url = re.search('http.+.com', link).group()
+                response = session.get(link)
+                page_soup = BeautifulSoup(response.content, "lxml")
+                scripts = page_soup.find_all("script", {"type": "text/javascript"})
+                for script in scripts:
+                    if "getElementById('dlbutton')" in script.text:
+                        url_raw = re.search(r'= (?P<url>\".+\" \+ (?P<math>\(.+\)) .+);',
+                                            script.text).group('url')
+                        math = re.search(r'= (?P<url>\".+\" \+ (?P<math>\(.+\)) .+);',
+                           script.text).group('math')
+                        url = url_raw.replace(math, '"' + str(eval(math)) + '"')
+                        break
+                url = base_url + eval(url)
+                name = urllib.parse.unquote(url.split('/')[-1])
+                #torlog.info(dl_url)
+ #               return url
+            
+            elif 'mediafire.com' in urls:
+                await rmsg.edit("Mediafire Link Found")
+                await aio.sleep(2)
+                try:
+                    link = re.findall(r'\bhttps?://.*mediafire\.com\S+', urls)[0]
+                except:
+                    await omess.reply("No ZippyShare links found")
+                page = BeautifulSoup(requests.get(link).content, 'lxml')
+                info = page.find('a', {'aria-label': 'Download file'})
+                url = info.get('href')
+                #torlog.info(dl_url)
+#                return url
+                
             else:
-                stat, dl_task = await ariatools.aria_dl(url,"",rmsg,omess)
-            if isinstance(dl_task,ARTask) and stat:
-                path = await dl_task.get_path()
-                if re_name:
-                    try:
-                        rename_path = os.path.join(os.path.dirname(path), re_name)
-                        os.rename(path, rename_path)
-                        path = rename_path
-                    except:
-                        torlog.warning("invaild name for file.")
-
+#                return url
+                url = None
+                await rmsg.edit("Processing Link")
+                await aio.sleep(1)
+            #todo implement direct links ;)
+             
+            # weird stuff had to refect message
+#            url = None
+#            umsg = await rmess.edit("processsing link)
+            
+            torlog.info(msg.raw_text)
+            torlog.info("Downloading Urls")
+            torlog.info(url)
+            torlog.info(urls)
+            rmsg = await omess.client.get_messages(ids=rmsg.id, entity=rmsg.chat_id)
+            try:
+                if url is None:
+                    stat, path = await ariatools.aria_dl(msg.raw_text,"",rmsg,omess)
+                elif url is not None:
+                    stat, path = await ariatools.aria_dl(url,"",rmsg,omess)                
+                else:
+                    stat, path = await ariatools.aria_dl(urls,"",rmsg,omess)
+            except:pass
+                                
+            if not isinstance(path,bool) and stat:
                 if extract:
                     newpath = await handle_ext_zip(path, rmsg, omess)
                     if not newpath is False:
                         path = newpath
                 else:
-                    newpath = await handle_zips(path, is_zip, rmsg, not rclone)
+                    newpath = await handle_zips(path, is_zip, rmsg)
                     if newpath is False:
                         pass
                     else:
                         path = newpath
-
-                ul_size = calculate_size(path)
-                transfer[1] += ul_size # for aria2 downloads
-
+                
                 if not rclone:
-                    ul_task = TGUploadTask(dl_task)
-                    await ul_task.dl_files()
-
-                    try:
-                        rdict = await upload_handel(path,rmsg,omess.from_id,dict(),user_msg=omess,task=ul_task)
-                    except:
-                        rdict = dict()
-                        torlog.exception("exception in direct links.")
-
-                    await ul_task.set_inactive()
-                    await print_files(omess,rdict,dl_task.hash, path = dl_path, size=ul_size)
-                    torlog.info("here are the files to be uploaded {}".format(rdict))
+                    rdict = await upload_handel(path,rmsg,omess.from_id,dict(),user_msg=omess)
+                    await print_files(omess,rdict)
+                    torlog.info("Here are the files to be uploaded {}".format(rdict))
                 else:
                     res = await rclone_driver(path,rmsg, omess)
                     if res is None:
-                        await msg.reply("<b>upload to drive failed. check logs for more info.</b>",parse_mode="html")
+                        await msg.reply("<b>UPLOAD TO DRIVE FAILED CHECK LOGS</b>",parse_mode="html")
             elif stat is False:
-                reason = await dl_task.get_error()
-                await rmsg.edit("failed to download this file.\n"+str(reason))
-                await errored_message(omess, rmsg)
+                await rmsg.edit("Failed to download this file.\n"+str(path))
+            
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+            except:pass
+        else:
+            torlog.info("Downloading Url")
+            #consider it as a direct link LOL
+            rmsg = await omess.reply("processing")
 
-            await clear_stuff(path)    
+            stat, path = await ariatools.aria_dl(omess.raw_text,"",rmsg,omess)
+            if not isinstance(path,bool) and stat:
+                if extract:
+                    newpath = await handle_ext_zip(path, rmsg, omess)
+                    if not newpath is False:
+                        path = newpath
+                else:
+                    newpath = await handle_zips(path, is_zip, rmsg)
+                    if newpath is False:
+                        pass
+                    else:
+                        path = newpath
+                
+                if not rclone:
+                    rdict = await upload_handel(path,rmsg,omess.from_id,dict(),user_msg=omess)
+                    await print_files(omess,rdict)
+                    torlog.info("Here are the files to be uploaded {}".format(rdict))
+                else:
+                    res = await rclone_driver(path,rmess, omess)
+                    if res is None:
+                        await msg.reply("<b>UPLOAD TO DRIVE FAILED CHECK LOGS</b>",parse_mode="html")
+            
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+            except:pass
+    
     return None
 
 async def pause_all(msg):
@@ -341,37 +356,28 @@ async def purge_all(msg):
 
 async def get_status(msg,all=False):
     smsg = await QBittorrentWrap.get_status(msg,all)
-    if len(smsg) > 3600:
-        chunks, chunk_size = len(smsg), len(smsg)//4
-        msgs = [ smsg[i:i+chunk_size] for i in range(0, chunks, chunk_size) ]
+    await msg.reply(smsg,parse_mode="html")
 
-        for j in msgs:
-            await msg.reply(j,parse_mode="html")
-            await aio.sleep(1)
-    else:
-        await msg.reply(smsg,parse_mode="html")
-
-async def handle_zips(path, is_zip, rmess, split=True):
+async def handle_zips(path, is_zip, rmess):
     # refetch rmess
     rmess = await rmess.client.get_messages(rmess.chat_id,ids=rmess.id)
     if is_zip:
         try:
-            await rmess.edit(rmess.text+"\n starting to archive the contents. please wait.")
-            zip_path = await add_to_zip(path, get_val("TG_UP_LIMIT"), split)
-
+            await rmess.edit(rmess.text+"\n Starting to Zip the contents. Please wait.")
+            zip_path = await add_to_zip(path, get_val("TG_UP_LIMIT"))
+            
             if zip_path is None:
-                await rmess.edit(rmess.text+"\n zip failed. fallback to normal")
+                await rmess.edit(rmess.text+"\n Zip failed. Falback to normal")
                 return False
-
+            
             if os.path.isdir(path):
                 shutil.rmtree(path)
             if os.path.isfile(path):
                 os.remove(path)
-            await rmess.edit(rmess.text+"\n zipping completed, now uploading.")
-            await clear_stuff(path)
+            await rmess.edit(rmess.text+"\n Zipping Done now uploading.")
             return zip_path
         except:
-            await rmess.edit(rmess.text+"\n zip failed. fallback to normal")
+            await rmess.edit(rmess.text+"\n Zip failed. Falback to normal")
             return False
     else:
         return path
@@ -383,7 +389,7 @@ async def handle_ext_zip(path, rmess, omess):
     if password is not None:
         password = password[1]
     start = time.time()
-    await rmess.edit(f"{rmess.text} trying to extract the archive with password <code>{password}</code>.", parse_mode="html")
+    await rmess.edit(f"{rmess.text} Trying to Extract the archive with password <code>{password}</code>.", parse_mode="html")
     wrong_pwd = False
 
     while True:
@@ -391,7 +397,7 @@ async def handle_ext_zip(path, rmess, omess):
             ext_path = await extract_archive(path,password=password)
         else:
             if (time.time() - start) > 1200:
-                await rmess.edit(f"{rmess.text} extract failed as no correct password was provided, uploading as it is.")
+                await rmess.edit(f"{rmess.text} Extract failed as no correct password was provided uploading as it is.")
                 return False
 
             temppass = rmess.client.dl_passwords.get(omess.id)
@@ -404,16 +410,11 @@ async def handle_ext_zip(path, rmess, omess):
                 password = temppass
                 wrong_pwd = False
                 continue
-
-        if isinstance(ext_path, str):
-            if "Wrong Password" in ext_path:
-                mess = f"<a href='tg://user?id={omess.sender_id}'>re-enter password</a>\nthe password <code>{password}</code> you provided is an incorrect password. you have {((time.time()-start)/60)-20} mins to reply or else, the zip will be uploaded as is.\n use <code>/setpass {omess.id} password-here</code>"
-                await omess.reply(mess, parse_mode="html")
-                wrong_pwd = True
-            else:
-                await clear_stuff(path)
-                return ext_path
-
+        
+        if "Wrong Password" in ext_path:
+            mess = f"<a href='tg://user?id={omess.sender_id}'>RE-ENTER PASSWORD</a>\nThe passowrd <code>{password}</code> you provided is a wrong password.You have {((time.time()-start)/60)-20} Mins to reply else un extracted zip will be uploaded.\n Use <code>/setpass {omess.id} password-here</code>"
+            await omess.reply(mess, parse_mode="html")
+            wrong_pwd = True
         elif ext_path is False:
             return False
         elif ext_path is None:
@@ -421,42 +422,30 @@ async def handle_ext_zip(path, rmess, omess):
             # itself further nothing to handle here
             return False
         else:
-            await clear_stuff(path)
             return ext_path
+    
 
-async def errored_message(e, reason):
-    msg = f"<a href='tg://user?id={e.sender_id}'>completed.\n</a>\ndownload failed."
-    if reason is not None:
-        await reason.reply(msg, parse_mode="html")
-    else:
-        await e.reply(msg, parse_mode="html")
 
-async def print_files(e,files,thash=None, path = None, size=None):
-    msg = f"<a href='tg://user?id={e.sender_id}'>completed.\n</a>"
 
-    if path is not None and size is None:
-        size = calculate_size(path)
-        transfer[0] += size
-        size = human_readable_bytes(size)
-        msg += f"uploaded size: {str(size)}\n\n"
-
+async def print_files(e,files,thash=None):
+    msg = f"<a href='tg://user?id={e.sender_id}'>Done</a>\n#uploads\n"
     if len(files) == 0:
         return
-
+    
     chat_id = e.chat_id
     msg_li = []
     for i in files.keys():
         link = f'https://t.me/c/{str(chat_id)[4:]}/{files[i]}'
-        if len(msg + f'<a href="{link}">{i}</a>\n') > 4000:
+        if len(msg + f'🚩 <a href="{link}">{i}</a>\n') > 4000:
             msg_li.append(msg)
-            msg = f'<a href="{link}">{i}</a>\n'
+            msg = f'🚩 <a href="{link}">{i}</a>\n'
         else:
-            msg += f'<a href="{link}">{i}</a>\n'
+            msg += f'🚩 <a href="{link}">{i}</a>\n'
 
     for i in msg_li:
         await e.reply(i,parse_mode="html")
         await aio.sleep(1)
-
+        
     await e.reply(msg,parse_mode="html")
 
     try:
@@ -472,7 +461,7 @@ async def print_files(e,files,thash=None, path = None, size=None):
     ids = list()
     for i in files.keys():
         ids.append(files[i])
-
+    
     msgs = await e.client.get_messages(e.chat_id,ids=ids)
     for i in msgs:
         index = None
@@ -486,78 +475,44 @@ async def print_files(e,files,thash=None, path = None, size=None):
         if index == 0:
             nextt = f'https://t.me/c/{chat_id}/{ids[index+1]}'
             buttons.append(
-                types.KeyboardButtonUrl("next", nextt)
+                types.KeyboardButtonUrl("Next", nextt)
             )
-            nextt = f'<a href="{nextt}">next</a>\n'
+            nextt = f'<a href="{nextt}">Next</a>\n'
         elif index == len(msgs)-1:
             prev = f'https://t.me/c/{chat_id}/{ids[index-1]}'
             buttons.append(
-                types.KeyboardButtonUrl("prev", prev)
+                types.KeyboardButtonUrl("Prev", prev)
             )
-            prev = f'<a href="{prev}">prev</a>\n'
+            prev = f'<a href="{prev}">Prev</a>\n'
         else:
             nextt = f'https://t.me/c/{chat_id}/{ids[index+1]}'
             buttons.append(
-                types.KeyboardButtonUrl("next", nextt)
+                types.KeyboardButtonUrl("Next", nextt)
             )
-            nextt = f'<a href="{nextt}">next</a>\n'
-
+            nextt = f'<a href="{nextt}">Next</a>\n'
+            
             prev = f'https://t.me/c/{chat_id}/{ids[index-1]}'
             buttons.append(
-                types.KeyboardButtonUrl("prev", prev)
+                types.KeyboardButtonUrl("Prev", prev)
             )
-            prev = f'<a href="{prev}">prev</a>\n'
+            prev = f'<a href="{prev}">Prev</a>\n'
 
         try:
             #await i.edit("{} {} {}".format(prev,i.text,nextt),parse_mode="html")
             await i.edit(buttons=buttons)
         except:pass
-        await aio.sleep(2)
-
-def calculate_size(path):
-    if path is not None:
-        try:
-            if os.path.isdir(path):
-                return get_size_fl(path)
-            else:
-                return os.path.getsize(path)
-        except:
-            torlog.warning("Size Calculation Failed.")
-            return 0
-    else:
-        return 0 
-
+        await aio.sleep(1)
+    
 
 
 async def get_transfer():
     client = await QBittorrentWrap.get_client()
     data = client.transfer_info()
-    dlbytes = data["dl_info_data"] + transfer[1]
-    upbytes = data["up_info_data"] + transfer[0]
-    return upbytes, dlbytes
-
-async def clear_stuff(path):
-    try:
-        if os.path.isdir(path):
-            shutil.rmtree(path)
-        else:
-            os.remove(path)
-    except:pass
-
+    print(data)
+    return data
 
 async def cancel_torrent(hashid, is_aria = False):
     if not is_aria:
         await QBittorrentWrap.deregister_torrent(hashid)
     else:
         await ariatools.remove_dl(hashid)
-
-def get_size_fl(start_path = '.'):
-    total_size = 0
-    for dirpath, _, filenames in os.walk(start_path):
-        for f in filenames:
-            fp = os.path.join(dirpath, f)
-            # skip if it is symbolic link
-            if not os.path.islink(fp):
-                total_size += os.path.getsize(fp)
-
-    return total_size
