@@ -30,7 +30,8 @@ async def rclone_driver(path,message, user_msg, dl_task):
 
         
         ul_task = RCUploadTask(dl_task)
-        return await rclone_upload(path,message,user_msg,drive_name,rem_base,edtime,conf_path, ul_task)
+        try:
+            return await rclone_upload(path,message,user_msg,drive_name,rem_base,edtime,conf_path, ul_task)
 
 
 # add user prompt here
