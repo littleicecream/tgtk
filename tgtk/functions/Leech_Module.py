@@ -319,7 +319,7 @@ async def check_link(msg,rclone=False,is_zip=False, extract=False, prev_msg=None
                     await print_files(omess,rdict,dl_task.hash, path = dl_path, size=ul_size)
                     torlog.info("here are the files to be uploaded {}".format(rdict))
                 else:
-                    res = await rclone_driver(path,rmsg, omess, dl_task)
+                    res = await rclone_driver(path,rmsg, omess)
                     if res is None:
                         await msg.reply("<b>upload to drive failed. check logs for more info.</b>",parse_mode="html")
             elif stat is False:
